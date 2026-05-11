@@ -1,0 +1,58 @@
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+build/
+dist/
+pip-log.txt
+
+# ---------- Node / extension ----------
+node_modules/
+package-lock.json
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ---------- Cocos Creator 2.4 ----------
+# These appear if the extension is dropped into a real Cocos project — keep them out of the package repo.
+library/
+local/
+temp/
+build/
+*.tmp
+
+# ---------- Editors / IDEs ----------
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-workspace
+*.sublime-project
+
+# ---------- OS ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- Logs / runtime ----------
+*.log
+logs/
+
+# ---------- Local config overrides ----------
+# Keep extension/config.json checked in (it's the default); but if a user creates a personal override:
+extension/config.local.json
+.env
+.env.local

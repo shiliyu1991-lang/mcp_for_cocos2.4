@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Unity MCP (unity-mcp-beta) 功能参考</title>
+<style>
+  :root { --fg:#222; --muted:#666; --bg:#fafafa; --card:#fff; --border:#e2e2e2; --accent:#1976d2; --warn:#c0392b; --ok:#2e7d32; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; background: var(--bg); color: var(--fg); margin: 0; padding: 0; line-height: 1.55; }
+  header { background: linear-gradient(135deg,#1976d2,#0d47a1); color:#fff; padding: 28px 36px; }
+  header h1 { margin: 0 0 6px; font-size: 22px; }
+  header .sub { opacity: .85; font-size: 13px; }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 28px 80px; }
+  section { background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 20px 24px; margin-bottom: 18px; }
+  section h2 { margin: 0 0 8px; font-size: 17px; color: var(--accent); border-bottom: 2px solid var(--accent); padding-bottom: 6px; display: inline-block; }
+  section h3 { margin: 18px 0 6px; font-size: 14px; color: #333; }
+  p, li { font-size: 13px; }
+  code, kbd { font-family: "JetBrains Mono", Consolas, monospace; background: #f0f3f7; padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+  pre { background: #1e1e1e; color: #d4d4d4; padding: 12px 14px; border-radius: 5px; font-size: 12px; overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; margin: 6px 0; }
+  th, td { border: 1px solid var(--border); padding: 6px 9px; text-align: left; vertical-align: top; }
+  th { background: #f5f7fa; font-weight: 600; }
+  td.t { width: 200px; font-family: Consolas, monospace; color: var(--accent); }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; background: #eef3fa; color: var(--accent); margin-right: 4px; }
+  .tag.warn { background: #fde9e7; color: var(--warn); }
+  .tag.ok { background: #e7f6e9; color: var(--ok); }
+  .muted { color: var(--muted); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .quote { border-left: 3px solid #ccc; padding: 4px 12px; color: #555; font-style: italic; margin: 6px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Unity MCP (unity-mcp-beta) 功能参考</h1>
+  <div class="sub">cocosMcp 仿写蓝本 · 来源：D:\AIToolEdit\unityMcp\unity-mcp-beta · 生成于 2026-05-11</div>
+</header>
+<main>
+
+<section>
+  <h2>1. 这是什么</h2>
+  <p>unity-mcp-beta 是 CoplayDev 维护的 Unity 编辑器 MCP（Model Context Protocol）插件，让 Claude 等 LLM 通过统一协议直接驱动 Unity 编辑器：读场景、改 GameObject、管资源、跑测试、出包、执行 C# 等。架构由两部分组成：</p>
+  <ul>
+    <li><b>Python FastMCP 服务器</b>（<code>Server/src/</code>）：暴露 MCP 工具给客户端（Claude Desktop / Cursor / Windsurf）。</li>
+    <li><b>Unity 编辑器侧 C# 包</b>（<code>MCPForUnity/</code>）：通过 WebSocket（或 stdio）与 Python 端通信，执行真正的编辑器操作。</li>
+  </ul>
+  <p>cocosMcp 的核心架构就是镜像这一套：Python 端几乎可以原样复用，Cocos 端用 JS 替代 C#。</p>
+</section>
+
+<section>
+  <h2>2. “生成一份 HTML 文档” 在 unity-mcp 里是什么</h2>
+  <p><b>结论：unity-mcp 并不生成本地 HTML 文档。</b><code>Server/src/cli/commands/docs.py</code> 提供的是 <code>unity-mcp docs get &lt;Class&gt; [Member]</code> 这条 CLI 子命令，它做的事情是<b>从 Unity 官方 ScriptReference 在线抓取</b>那个类/成员的文档页（URL 拼成 <code>https://docs.unity3d.com/ScriptReference/Class.Member.html</code>），输出可以是 <code>text/json/table</code> 三种格式。</p>
+  <p>实际负责抓取的工具是 <code>services/tools/unity_docs.py</code>，它对外是一个 MCP tool，提供 4 个 action：</p>
+  <table>
+    <tr><th>action</th><th>含义</th></tr>
+    <tr><td class="t">get_doc</td><td>取某个 C# API 类/成员的 ScriptReference 页面。</td></tr>
+    <tr><td class="t">get_manual</td><td>取 Unity Manual 的某一页。</td></tr>
+    <tr><td class="t">get_package_doc</td><td>取某个包（如 URP、Cinemachine）的文档。</td></tr>
+    <tr><td class="t">lookup</td><td>合并搜索（doc + manual + package）。</td></tr>
+  </table>
+  <p>对应到 cocos 2.4 的等价做法（如果想做）：抓 <code>docs.cocos.com/creator/2.4/manual/en/</code> 和 <code>docs.cocos.com/creator/2.4/api/en/</code> 这两棵树。注意 Cocos 引擎 API 本身是 JS，所以更接近“查在线手册”而不是“反射 C# 类型”。</p>
+  <div class="quote">如果 liyu 你的原意是“让 cocosMcp 也输出一份项目 HTML 报告（列出场景、节点、资源……）”，这在 unity-mcp 里其实是没有的——unity-mcp 只暴露 MCP 工具，让 LLM 自己组织报告。要做这个能力 cocosMcp 得自己加一个 <code>generate_project_report</code> 之类的工具。</div>
+</section>
+
+<section>
+  <h2>3. unity-mcp 的 MCP 工具全集（Python 端）</h2>
+  <p class="muted">每个工具是一个 <code>@mcp_for_unity_tool</code> 装饰的 async 函数，行为通过 <code>action</code> 参数分支。下面给出工具名 + 官方描述（直引），按主题分组。</p>
+
+  <h3>3.1 场景 / GameObject 类</h3>
+  <table>
+    <tr><th>tool</th><th>描述</th></tr>
+    <tr><td class="t">manage_scene</td><td>场景 CRUD：get_hierarchy, get_active, get_build_settings, get_loaded_scenes, scene_view_frame, create, load, save, close_scene, set_active_scene, move_to_scene, validate。</td></tr>
+    <tr><td class="t">manage_gameobject</td><td>GameObject CRUD：create / modify / delete / duplicate / move_relative / look_at。<b>不</b>负责搜索（用 find_gameobjects）和组件（用 manage_components）。</td></tr>
+    <tr><td class="t">manage_components</td><td>组件增删改：add / remove / set_property。读组件用资源 URI <code>mcpforunity://scene/gameobject/{id}/components</code>。</td></tr>
+    <tr><td class="t">find_gameobjects</td><td>按 name/tag/layer/component/path 搜节点，返回 instance id 分页。</td></tr>
+    <tr><td class="t">manage_prefabs</td><td>Prefab：get_info / get_hierarchy / create_from_gameobject / modify_contents / open_prefab_stage / save_prefab_stage / close_prefab_stage。</td></tr>
+  </table>
+
+  <h3>3.2 资源 / 脚本类</h3>
+  <table>
+    <tr><th>tool</th><th>描述</th></tr>
+    <tr><td class="t">manage_asset</td><td>资源 import/create/modify/delete + search。</td></tr>
+    <tr><td class="t">manage_script</td><td>C# 脚本的创建 / 读 / 改 / 删。</td></tr>
+    <tr><td class="t">script_apply_edits</td><td>对 C# 脚本做精确 diff 编辑（带 SHA 校验）。</td></tr>
+    <tr><td class="t">find_in_file</td><td>在脚本里搜内容。</td></tr>
+    <tr><td class="t">manage_shader</td><td>shader 文件 CRUD。</td></tr>
+    <tr><td class="t">manage_scriptable_object</td><td>SerializedObject 路径 set，创建/改 ScriptableObject 资源。</td></tr>
+    <tr><td class="t">manage_texture</td><td>程序化纹理生成（棋盘格、网格、砖块、条纹…）+ 从图片导入。</td></tr>
+    <tr><td class="t">manage_ui</td><td>UI Toolkit：UXML/USS/UIDocument 增删改 + render_ui 截图自检。</td></tr>
+  </table>
+
+  <h3>3.3 渲染 / 图形 / 物理 / 动画 / VFX</h3>
+  <table>
+    <tr><th>tool</th><th>描述</th></tr>
+    <tr><td class="t">manage_material</td><td>材质：create / set_material_shader_property / set_material_color / assign_material_to_renderer …</td></tr>
+    <tr><td class="t">manage_graphics</td><td>Volumes、Bake、Rendering stats、Pipeline、URP RendererFeatures、Skybox、Environment。</td></tr>
+    <tr><td class="t">manage_camera</td><td>Camera + Cinemachine：create_camera 预设、set_lens/body/aim/noise、blend、截图（含 multiview）。</td></tr>
+    <tr><td class="t">manage_physics</td><td>物理设置、碰撞矩阵、PhysicsMaterial、Joint、raycast/overlap、Rigidbody、simulate_step。</td></tr>
+    <tr><td class="t">manage_animation</td><td>Animator / AnimatorController / AnimationClip 一站式。</td></tr>
+    <tr><td class="t">manage_vfx</td><td>ParticleSystem / VisualEffect / Line / TrailRenderer。</td></tr>
+    <tr><td class="t">manage_probuilder</td><td>ProBuilder 建模：create_shape / extrude_faces / bevel_edges / subdivide / merge_vertices …</td></tr>
+  </table>
+
+  <h3>3.4 编辑器控制 / 调试 / 测试 / 构建</h3>
+  <table>
+    <tr><th>tool</th><th>描述</th></tr>
+    <tr><td class="t">manage_editor</td><td>play/pause/stop, tag/layer 增删, deploy_package, restore_package, undo/redo, telemetry。</td></tr>
+    <tr><td class="t">manage_build</td><td>触发构建、切换平台、配置 settings、构建场景、Build Profile、批量构建、取消。</td></tr>
+    <tr><td class="t">manage_profiler</td><td>Profiler 会话、counters、内存快照对比、Frame Debugger。</td></tr>
+    <tr><td class="t">manage_packages</td><td>Unity 包管理：list/search/install/remove/embed + 自定义 registry。</td></tr>
+    <tr><td class="t">execute_menu_item</td><td>按菜单路径调用菜单项。</td></tr>
+    <tr><td class="t">execute_code</td><td>编辑器内执行任意 C#，方法体形式，可访问 UnityEngine/UnityEditor；带 history/replay/clear。</td></tr>
+    <tr><td class="t">execute_custom_tool</td><td>执行项目侧注册的自定义工具。</td></tr>
+    <tr><td class="t">read_console</td><td>读 / 清 Editor 控制台，分页 + cursor。</td></tr>
+    <tr><td class="t">run_tests</td><td>启动 + 轮询 Unity TestRunner（edit/play mode）。</td></tr>
+    <tr><td class="t">batch_execute</td><td>批量执行多条 MCP 命令，带重试和并发上限。</td></tr>
+    <tr><td class="t">preflight</td><td>服务端预检——编译中/测试中时拦住破坏性工具。</td></tr>
+    <tr><td class="t">refresh_unity</td><td>检测外部代码改动并触发编辑器刷新。</td></tr>
+    <tr><td class="t">unity_reflect</td><td>反射读 Unity 实时 C# API（防 LLM 拿过时签名）：get_type / get_member / search。</td></tr>
+    <tr><td class="t">unity_docs</td><td>抓 ScriptReference / Manual / 包文档（即上一节那位）。</td></tr>
+    <tr><td class="t">manage_tools</td><td>按 session 启停工具分组：list_groups / activate / deactivate / sync / reset。</td></tr>
+    <tr><td class="t">set_active_instance</td><td>同一台机器多开 Unity 时，选择当前要驱动的那个实例。</td></tr>
+    <tr><td class="t">debug_request_context</td><td>回显 FastMCP 当前请求上下文，调试用。</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>4. unity-mcp 的 MCP Resources</h2>
+  <p class="muted">Resource = LLM 用 URI 拉取的只读视图。Python 端在 <code>services/resources/</code>。</p>
+  <table>
+    <tr><th>URI</th><th>内容</th></tr>
+    <tr><td class="t">mcpforunity://project/info</td><td>项目根、Unity 版本、平台。</td></tr>
+    <tr><td class="t">mcpforunity://project/layers</td><td>所有 Layer + 索引。</td></tr>
+    <tr><td class="t">mcpforunity://project/tags</td><td>所有 Tag。</td></tr>
+    <tr><td class="t">mcpforunity://editor/state</td><td>play/编译/活动场景/活动阶段建议。</td></tr>
+    <tr><td class="t">mcpforunity://editor/selection</td><td>当前选中 GameObject/资源详情。</td></tr>
+    <tr><td class="t">mcpforunity://editor/active-tool</td><td>当前编辑工具（Move/Rotate/Scale…）。</td></tr>
+    <tr><td class="t">mcpforunity://editor/windows</td><td>所有编辑器窗口标题、类型、位置、焦点。</td></tr>
+    <tr><td class="t">mcpforunity://editor/prefab-stage</td><td>当前打开的 Prefab Stage 及其层级。</td></tr>
+    <tr><td class="t">mcpforunity://scene/cameras</td><td>场景所有 Camera/Cinemachine + Brain 状态。</td></tr>
+    <tr><td class="t">mcpforunity://scene/gameobject/{id}</td><td>单个 GameObject 详情。</td></tr>
+    <tr><td class="t">mcpforunity://scene/gameobject/{id}/components</td><td>该 GO 所有组件。</td></tr>
+    <tr><td class="t">mcpforunity://scene/gameobject/{id}/component/{name}</td><td>单个组件。</td></tr>
+    <tr><td class="t">mcpforunity://prefab/{path}[/hierarchy]</td><td>Prefab 数据 / 层级。</td></tr>
+    <tr><td class="t">mcpforunity://graphics/rendering-stats</td><td>渲染统计 / 显存。</td></tr>
+    <tr><td class="t">mcpforunity://graphics/renderer-features</td><td>URP RendererFeatures 列表。</td></tr>
+    <tr><td class="t">mcpforunity://menu-items</td><td>所有菜单项路径。</td></tr>
+    <tr><td class="t">mcpforunity://tests</td><td>前 50 条单元测试。</td></tr>
+    <tr><td class="t">mcpforunity://tool-groups</td><td>工具分组及启停状态。</td></tr>
+    <tr><td class="t">mcpforunity://custom-tools</td><td>项目自定义工具列表。</td></tr>
+    <tr><td class="t">mcpforunity://instances</td><td>本机所有运行中的 Unity 实例。</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>5. 通讯架构</h2>
+  <div class="grid2">
+    <div>
+      <h3>主链路（HTTP/WS）</h3>
+      <ul>
+        <li>Python 起一个 Starlette 服务，把 <code>/ws/mcp-bridge</code> 暴露为 WebSocket 端点（<code>PluginHub</code>）。</li>
+        <li>Unity 插件主动连过来，发 <code>RegisterMessage</code>（session_id、项目元数据）。</li>
+        <li>Python 把连接存进 <code>_connections[session_id]</code>。</li>
+        <li>MCP 工具调用 → 发 <code>ExecuteCommandMessage{command_type, params, command_id}</code>。</li>
+        <li>Unity 执行对应 C# handler，回 <code>CommandResultMessage</code>，按 command_id 配回 Future。</li>
+        <li>10s 一次 ping/pong；默认 30s 超时，<code>read_console</code>/ping 等只给 2s 快失败。</li>
+        <li>支持 <code>retry_on_reload</code>：domain reload 重连后自动重试。</li>
+      </ul>
+    </div>
+    <div>
+      <h3>旧链路（stdio/TCP）</h3>
+      <ul>
+        <li><code>transport/legacy/unity_connection.py</code> + <code>port_discovery.py</code>。</li>
+        <li>本地起 TCP server，发现 Unity 监听端口后建池。</li>
+        <li><code>unity_transport.send_with_unity_instance()</code> 按 <code>config.transport_mode</code> 路由到 HTTP 或 stdio。</li>
+      </ul>
+      <h3>消息类型</h3>
+      <p>Welcome / Register / RegisterTools / ExecuteCommand / CommandResult / Ping / Pong / SessionList / SessionDetails。全部 JSON。</p>
+    </div>
+  </div>
+  <p>对比 cocosMcp：当前只实现了一个简化版的“WS 一帧一 JSON”，没有 session 概念、没有多实例、没有 ping/pong（依赖 ws 库默认），没有 retry_on_reload。这些都是后续可选项。</p>
+</section>
+
+<section>
+  <h2>6. 设计哲学（值得复制到 cocosMcp 的）</h2>
+  <ul>
+    <li><b>对称命名</b>：Python tool 名 = bridge command = C# handler 文件名。cocosMcp 已经在 CLAUDE.md 里立了这条规矩。</li>
+    <li><b>单工具单职责，靠 <code>action</code> 分支</b>：避免参数膨胀；超过 ~6 个 action 拆。</li>
+    <li><b>读用 resource，写用 tool</b>：unity-mcp 把“查询场景树”做成 resource URI，cocosMcp 现在全是 tool。这是 cocosMcp 当前的一个差距。</li>
+    <li><b>错误如实回流</b>：bridge 失败时 Python 端返回的不是抛异常，而是 <code>{success: false, error: ...}</code>。</li>
+    <li><b>反射防幻觉</b>：<code>unity_reflect</code> 让 LLM 在写代码前先确认 API 真的存在。cocosMcp 可以做同样的 <code>cc_reflect</code>。</li>
+    <li><b>preflight 拦破坏性</b>：编译中/测试中不让破坏性工具跑。</li>
+    <li><b>execute_code 是 last resort</b>：但要带 history/replay，方便 LLM 复盘和用户审计。</li>
+    <li><b>工具分组按 session 启停</b>：把权限控制做到协议层。</li>
+  </ul>
+</section>
+
+</main>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "_comment_": "示例：把 cocosMcp 加到 Claude Desktop 的 mcpServers 配置里。Claude Code 用法类似，可以用 `claude mcp add` 命令；或者写到 ~/.claude.json。注意 Windows 上路径里的反斜杠记得转义，或直接用正斜杠。",
+  "mcpServers": {
+    "cocos": {
+      "command": "D:/AIToolEdit/cocosMcp/server/.venv/Scripts/python.exe",
+      "args": ["-m", "main", "--transport", "stdio"],
+      "cwd": "D:/AIToolEdit/cocosMcp/server/src",
+      "env": {
+        "COCOS_MCP_BRIDGE_HOST": "127.0.0.1",
+        "COCOS_MCP_BRIDGE_PORT": "6010"
+      }
+    }
+  }
+}
