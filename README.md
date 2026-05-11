@@ -1,8 +1,19 @@
 # cocosMcp — Cocos Creator 2.4 的 MCP 桥
 
-让 AI 助手（Claude Desktop / Claude Code / Cursor / Windsurf 等）通过 [Model Context Protocol](https://modelcontextprotocol.io/) 直接操作 Cocos Creator 2.4 编辑器：读写场景节点、增删资源、看控制台日志、跑一段调试脚本……
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Cocos Creator](https://img.shields.io/badge/Cocos%20Creator-2.4-blue.svg)](https://docs.cocos.com/creator/2.4/manual/en/)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
+[![MCP](https://img.shields.io/badge/Protocol-MCP-purple.svg)](https://modelcontextprotocol.io/)
+[![Status: MVP](https://img.shields.io/badge/Status-MVP-brightgreen.svg)](docs/plan.md)
+
+让 AI 助手（Claude Desktop / Claude Code / Cursor / Windsurf 等）通过 [Model Context Protocol](https://modelcontextprotocol.io/) 直接操作 **Cocos Creator 2.4** 编辑器：读写场景节点、增删资源、看控制台日志、跑一段调试脚本……
 
 参考了 [unity-mcp](https://github.com/CoplayDev/unity-mcp) 的 Python (FastMCP) + 编辑器插件 + WebSocket 的总体架构。
+
+> 📋 **当前进度** 与 **后续路线图**：[`docs/plan.md`](docs/plan.md)
+> 🏗️ **架构细节**：[`docs/architecture.md`](docs/architecture.md)
+> ➕ **如何加一个新工具**：[`docs/adding-tools.md`](docs/adding-tools.md)
+> 📊 **对标的 unity-mcp 完整功能集**：[`docs/unity-mcp-features.html`](docs/unity-mcp-features.html)（本地用浏览器打开）
 
 ## 架构
 
@@ -36,16 +47,16 @@ Cocos Creator 2.4 编辑器扩展  (extension/)
 
 ### 1. 安装编辑器扩展
 
-把 `extension/` 拷贝（或软链）到 Cocos Creator 项目的 `packages/cocos-mcp/`。例如本仓库里的项目可以这样：
+把 `extension/` 拷贝（或软链）到 Cocos Creator 项目的 `packages/cocos-mcp/`。`<YOUR_COCOS_PROJECT>` 换成你自己的 Cocos 项目路径：
 
 ```cmd
-xcopy /E /I D:\AIToolEdit\cocosMcp\extension E:\huoyin\trunk\packages\cocos-mcp
+xcopy /E /I extension <YOUR_COCOS_PROJECT>\packages\cocos-mcp
 ```
 
 进入 `extension/` 安装运行时依赖（只装一次）：
 
 ```cmd
-cd /d E:\huoyin\trunk\packages\cocos-mcp
+cd /d <YOUR_COCOS_PROJECT>\packages\cocos-mcp
 npm install
 ```
 
@@ -56,7 +67,7 @@ npm install
 需要 Python 3.10+。建议用 [uv](https://github.com/astral-sh/uv) 或 venv：
 
 ```cmd
-cd /d D:\AIToolEdit\cocosMcp\server
+cd server
 python -m venv .venv
 .venv\Scripts\activate
 pip install -e .
@@ -65,7 +76,7 @@ pip install -e .
 或者用 uv：
 
 ```cmd
-cd /d D:\AIToolEdit\cocosMcp\server
+cd server
 uv pip install -e .
 ```
 
@@ -85,13 +96,15 @@ python -m main --transport stdio
 {
   "mcpServers": {
     "cocos": {
-      "command": "D:/AIToolEdit/cocosMcp/server/.venv/Scripts/python.exe",
+      "command": "<ABS_PATH_TO_REPO>/server/.venv/Scripts/python.exe",
       "args": ["-m", "main", "--transport", "stdio"],
-      "cwd": "D:/AIToolEdit/cocosMcp/server/src"
+      "cwd": "<ABS_PATH_TO_REPO>/server/src"
     }
   }
 }
 ```
+
+> Windows 上用正斜杠 `/` 或转义后的反斜杠 `\\`。macOS/Linux 把 `Scripts` 换成 `bin`，可执行文件去掉 `.exe`。
 
 Claude Code（`~/.claude.json` 或 `claude mcp add` 命令）类似。
 
@@ -150,6 +163,15 @@ cocosMcp/
 └── README.md
 ```
 
+## 贡献
+
+这是一个还在快速迭代的 MVP，路线图在 [`docs/plan.md`](docs/plan.md) 里。欢迎提 Issue 讨论思路、提 PR 加工具——加工具的流程见 [`docs/adding-tools.md`](docs/adding-tools.md)。
+
+代码风格的两条铁律（同 [`CLAUDE.md`](CLAUDE.md)）：
+
+- **对称命名**：`tools/<name>.py` ↔ bridge command `<name>` ↔ `handlers/<name>.js`，三处同名。
+- **资源操作不绕过 assetdb**：所有写资源的操作走 `Editor.assetdb.create/delete/refresh/setMetaInfo`，**禁止** `fs.writeFileSync` 直接写工程资源。
+
 ## 许可证
 
-MIT。参考了 [unity-mcp](https://github.com/CoplayDev/unity-mcp)（同样 MIT）的设计思路。
+[MIT](LICENSE)。参考了 [unity-mcp](https://github.com/CoplayDev/unity-mcp)（同样 MIT）的设计思路。

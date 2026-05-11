@@ -1,0 +1,35 @@
+# Default: normalize line endings to LF in the repo, restore platform-native on checkout.
+* text=auto eol=lf
+
+# Windows-only scripts keep CRLF.
+*.cmd  text eol=crlf
+*.bat  text eol=crlf
+*.ps1  text eol=crlf
+
+# Source / config — explicitly LF.
+*.py   text eol=lf
+*.js   text eol=lf
+*.ts   text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+
+# Binaries — never diff or merge as text.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.zip  binary
+*.7z   binary
+*.gz   binary
+*.dll  binary
+*.exe  binary
+*.so   binary
+*.dylib binary
+*.fbx  binary
+*.prefab binary
+*.fire   binary
