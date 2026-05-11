@@ -1,56 +1,69 @@
 @echo off
 REM ============================================================
 REM  publish-to-github.cmd
-REM  One-shot script: init repo, first commit, create private
-REM  GitHub repo "mcp_for_cocoscreator2.4" and push.
-REM  Requires: gh CLI (https://cli.github.com/) already logged in
-REM            (`gh auth status` should be green).
+REM  Push this local folder to an EXISTING GitHub repo:
+REM    https://github.com/shiliyu1991-lang/mcp_for_cocos2.4
+REM
+REM  Safe to re-run. On first run it sets up git, on later runs
+REM  it just adds + commits + pushes the diff.
 REM ============================================================
 
 setlocal ENABLEDELAYEDEXPANSION
 cd /d "%~dp0"
 
-echo.
-echo === checking gh ===
-gh auth status >nul 2>&1
-if errorlevel 1 (
-    echo [ERROR] gh CLI not logged in. Run: gh auth login
-    exit /b 1
-)
+set REMOTE_URL=https://github.com/shiliyu1991-lang/mcp_for_cocos2.4.git
 
 if not exist ".git" (
-    echo.
     echo === git init ===
     git init -b main || goto :err
 )
 
-echo.
-echo === staging files (with .gitignore applied) ===
-git add -A || goto :err
-
-REM Make sure user.name / user.email are set (use gh's identity if not).
+REM Ensure user.name / user.email are set so commit doesn't fail.
 for /f "delims=" %%A in ('git config user.email 2^>nul') do set HAS_EMAIL=%%A
 if "%HAS_EMAIL%"=="" (
-    for /f "delims=" %%A in ('gh api user --jq ".login"') do set GH_LOGIN=%%A
-    for /f "delims=" %%A in ('gh api user --jq ".email // empty"') do set GH_EMAIL=%%A
-    if "%GH_EMAIL%"=="" set GH_EMAIL=!GH_LOGIN!@users.noreply.github.com
-    git config user.name  "!GH_LOGIN!"
-    git config user.email "!GH_EMAIL!"
+    git config user.name  "shiliyu1991-lang"
+    git config user.email "shiliyu1991@gmail.com"
 )
 
-echo.
-echo === first commit ===
-git commit -m "chore: initial commit (cocosMcp MVP)" || (
-    echo [INFO] Nothing new to commit, that's fine.
+REM Make sure 'origin' points at the right repo.
+git remote get-url origin >nul 2>&1
+if errorlevel 1 (
+    echo === adding remote origin ===
+    git remote add origin %REMOTE_URL% || goto :err
+) else (
+    git remote set-url origin %REMOTE_URL%
 )
 
-echo.
-echo === creating private GitHub repo + pushing ===
-gh repo create mcp_for_cocoscreator2.4 --private --source=. --remote=origin --push --description "MCP server + Cocos Creator 2.4 editor extension bridging Claude to the editor" || goto :err
+echo === staging files ===
+git add -A || goto :err
+
+echo === commit (skipped if nothing changed) ===
+git diff --cached --quiet
+if errorlevel 1 (
+    set /p MSG=Commit message ^(enter for default^):
+    if "!MSG!"=="" set MSG=update
+    git commit -m "!MSG!" || goto :err
+) else (
+    echo [INFO] Nothing new to commit.
+)
+
+echo === pushing to origin main ===
+git push -u origin main
+if errorlevel 1 (
+    echo.
+    echo [HINT] push was rejected. Likely because the GitHub repo was created with a README.
+    echo Choose ONE:
+    echo   A^) Merge remote first:
+    echo        git pull origin main --allow-unrelated-histories
+    echo        git push -u origin main
+    echo   B^) Force-overwrite remote (discards remote README/LICENSE^):
+    echo        git push -u origin main --force
+    exit /b 1
+)
 
 echo.
 echo === DONE ===
-gh repo view --web
+echo https://github.com/shiliyu1991-lang/mcp_for_cocos2.4
 exit /b 0
 
 :err
