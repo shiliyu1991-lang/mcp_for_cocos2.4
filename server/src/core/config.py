@@ -21,7 +21,7 @@ def _env_int(name: str, default: int) -> int:
 
 @dataclass
 class Config:
-    version: str = "0.1.0"
+    version: str = "0.2.0"
     bridge_host: str = field(default_factory=lambda: os.environ.get("COCOS_MCP_BRIDGE_HOST", "127.0.0.1"))
     bridge_port: int = field(default_factory=lambda: _env_int("COCOS_MCP_BRIDGE_PORT", 6010))
     bridge_path: str = field(default_factory=lambda: os.environ.get("COCOS_MCP_BRIDGE_PATH", "/cocosmcp"))

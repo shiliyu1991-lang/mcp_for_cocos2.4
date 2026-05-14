@@ -56,6 +56,3 @@ logs/
 extension/config.local.json
 .env
 .env.local
-
-# ---------- Personal helper scripts (contain GitHub username / email / repo URL) ----------
-publish-to-github.cmd

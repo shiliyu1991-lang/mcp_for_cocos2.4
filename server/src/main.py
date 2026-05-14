@@ -47,8 +47,9 @@ logger = logging.getLogger("cocos-mcp")
 
 
 INSTRUCTIONS = """
-This server controls a Cocos Creator 2.4 editor instance through a small
-WebSocket bridge that runs as an editor extension.
+This server controls a Cocos Creator editor (2.4 or 3.8.x) through a small
+WebSocket bridge that runs as an editor extension. The Python side hosts a
+WS server; the Cocos extension connects to it from its panel.
 
 What you can do:
 - get_project_info       — sanity-check the bridge & inspect project metadata
@@ -66,8 +67,9 @@ Conventions:
   permission. Prefer the typed tools whenever they cover the use case.
 
 Debugging:
-- If a tool returns "bridge unavailable", the user needs to start the
-  Cocos extension — Cocos Creator menu → 扩展 → Cocos MCP → 启动 Bridge.
+- If a tool returns "bridge unavailable", the Cocos extension hasn't dialed
+  in to the Python bridge yet. In the editor: open the Cocos MCP panel and
+  click Connect (URL defaults to ws://127.0.0.1:6010/cocosmcp).
 - Use read_console after script edits to spot compile errors.
 """
 
@@ -81,14 +83,13 @@ def build_server() -> FastMCP:
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="cocos-mcp",
-        description="MCP server for Cocos Creator 2.4",
+        description="MCP server for Cocos Creator (2.4 + 3.8.x)",
     )
     p.add_argument("--bridge-host", default=None,
-                   help="Host the Cocos extension is listening on. "
-                        "Defaults to env COCOS_MCP_BRIDGE_HOST or 127.0.0.1.")
+                   help="Host the Python WS bridge listens on for the Cocos "
+                        "extension to dial in. Default 127.0.0.1.")
     p.add_argument("--bridge-port", type=int, default=None,
-                   help="Port the Cocos extension is listening on. "
-                        "Defaults to env COCOS_MCP_BRIDGE_PORT or 6010.")
+                   help="Port the Python WS bridge listens on. Default 6010.")
     p.add_argument("--transport", choices=["stdio", "http"], default="stdio",
                    help="MCP transport (default stdio for Claude Desktop / Claude Code).")
     p.add_argument("--http-host", default="127.0.0.1")
@@ -105,10 +106,15 @@ def main(argv: list[str] | None = None) -> None:
         config.bridge_port = args.bridge_port
 
     logger.info("cocos-mcp v%s starting", config.version)
-    logger.info("bridge target: ws://%s:%d/cocosmcp",
-                config.bridge_host, config.bridge_port)
+    logger.info("bridge will listen on ws://%s:%d%s (waiting for Cocos to dial in)",
+                config.bridge_host, config.bridge_port, config.bridge_path)
 
     bridge = CocosBridge(host=config.bridge_host, port=config.bridge_port)
+    try:
+        bridge.start_in_thread()
+    except Exception:
+        logger.exception("failed to start cocos bridge (port already in use?)")
+        raise
     set_global_bridge(bridge)
 
     server = build_server()

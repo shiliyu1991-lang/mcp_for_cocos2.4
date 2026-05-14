@@ -1,6 +1,8 @@
-# cocos-mcp server
+# server (Python FastMCP)
 
-Python (FastMCP) MCP server. See top-level [README](../README.md) for the full picture; this file is just for the server piece.
+Python (FastMCP) MCP server. See top-level [README](../README.md) and
+[USAGE.md](../USAGE.md) for the full picture; this file just covers the
+server piece.
 
 ## Layout
 
@@ -8,7 +10,7 @@ Python (FastMCP) MCP server. See top-level [README](../README.md) for the full p
 src/
 ├── main.py                       Entry point. `python -m main`
 ├── core/config.py                Mutable Config (host, port, timeouts)
-├── transport/ws_client.py        WebSocket client to the editor extension
+├── transport/ws_client.py        WS *server* the Cocos extension dials into
 ├── services/
 │   ├── registry.py               @cocos_mcp_tool decorator
 │   └── tools/
@@ -27,12 +29,17 @@ src/
 
 ```bash
 cd src
-python -m main --transport stdio
-# or
-python -m main --transport http --http-port 8765
+python -m main --transport stdio                    # for Claude Desktop / Cursor
+python -m main --transport http --http-port 8765    # for manual testing
 ```
 
-Env vars (override CLI / defaults):
+The Python process opens a WebSocket server on `127.0.0.1:6010/cocosmcp`
+and waits for the Cocos extension to dial in (via the panel's Connect
+button). The WS server runs on a daemon thread with its own asyncio loop;
+`bridge.call(...)` from FastMCP's loop dispatches over via
+`asyncio.run_coroutine_threadsafe`.
+
+## Env vars (override CLI / defaults)
 
 | var                          | default            |
 | ---------------------------- | ------------------ |
@@ -44,11 +51,11 @@ Env vars (override CLI / defaults):
 
 ## Developing
 
-Sanity check syntax without running:
+Sanity-check syntax without running:
 
 ```bash
 python -m py_compile src/main.py src/transport/ws_client.py \
     src/services/registry.py src/services/tools/*.py
 ```
 
-Add a new tool: see [../docs/adding-tools.md](../docs/adding-tools.md).
+Add a new tool: see [`CLAUDE.md`](../CLAUDE.md) "Adding a tool".

@@ -1,116 +1,92 @@
 # 加一个新工具
 
-以 `manage_prefab` 为例（假设你想新增一个工具列出所有 prefab，并在场景里实例化）。
+> 当前正式说明在 [CLAUDE.md](../CLAUDE.md) 的 "Adding a tool" 一节。
+> 这份文档保留下来是因为它给了一个稍长一点的例子。
 
-## 1. Extension 端：加 handler
+## 1. Editor 端
 
-`extension/handlers/manage_prefab.js`：
+往对应版本 `main.js` 的 `handlers = { ... }` 对象里加一个键：
 
-```js
-'use strict';
+- **2.4** → `cocos-mcp-2x/main.js`，用回调式 `Editor.assetdb.*` / `Editor.Scene.callSceneScript`
+- **3.x** → `cocos-mcp-3x/main.js`，用 Promise 式 `Editor.Message.request(...)`
 
-function _list() {
-    return new Promise((resolve, reject) => {
-        Editor.assetdb.queryAssets('db://assets/**/*', 'prefab', (err, results) => {
-            if (err) { reject(err); return; }
-            resolve({
-                count: results.length,
-                prefabs: results.map((r) => ({ url: r.url, uuid: r.uuid })),
-            });
-        });
-    });
-}
-
-function _instantiate(params) {
-    return new Promise((resolve, reject) => {
-        Editor.Scene.callSceneScript('cocos-mcp', 'mcp:prefab-instantiate', params,
-            (err, data) => err ? reject(err) : resolve(data));
-    });
-}
-
-const _ops = { list: _list, instantiate: _instantiate };
-
-async function handle(params /* , ctx */) {
-    const action = (params && params.action) || 'list';
-    const fn = _ops[action];
-    if (!fn) throw new Error('manage_prefab: unknown action ' + action);
-    return await fn(params || {});
-}
-
-module.exports = { name: 'manage_prefab', handle };
-```
-
-`instantiate` 需要 scene 上下文，所以加一个 op 到 `extension/scene-script.js`：
+最小例子（3.x，列出所有 prefab）：
 
 ```js
-ops['mcp:prefab-instantiate'] = function (event, payload) {
-    try {
-        const uuid = payload && payload.uuid;
-        if (!uuid) { event.reply(new Error('uuid required')); return; }
-        cc.assetManager.loadAny({ uuid, type: cc.Prefab }, (err, prefab) => {
-            if (err) { event.reply(err); return; }
-            const node = cc.instantiate(prefab);
-            const parent = (payload && payload.parentUuid) ? _findByUuid(payload.parentUuid) : _scene();
-            if (!parent) { event.reply(new Error('parent not found')); return; }
-            parent.addChild(node);
-            event.reply(null, { uuid: node.uuid, name: node.name, parentUuid: parent.uuid });
+// cocos-mcp-3x/main.js 里 handlers 对象内
+async manage_prefab(params) {
+    params = params || {};
+    if ((params.action || 'list') === 'list') {
+        const r = await Editor.Message.request('asset-db', 'query-assets', {
+            pattern: 'db://assets/**/*',
+            ccType: 'cc.Prefab',
         });
-    } catch (e) { event.reply(e); }
-};
+        const arr = Array.isArray(r) ? r : [];
+        return {
+            count: arr.length,
+            prefabs: arr.map((s) => ({ url: s.source, uuid: s.uuid })),
+        };
+    }
+    throw new Error('manage_prefab: unknown action');
+},
 ```
 
-## 2. Python 端：加 tool
+2.4 等价（回调式）：
 
-`server/src/services/tools/manage_prefab.py`：
+```js
+// cocos-mcp-2x/main.js 里 handlers 对象内
+async manage_prefab(params) {
+    params = params || {};
+    if ((params.action || 'list') === 'list') {
+        const arr = await new Promise((res, rej) => {
+            Editor.assetdb.queryAssets('db://assets/**/*', 'prefab',
+                (e, r) => e ? rej(e) : res(r || []));
+        });
+        return {
+            count: arr.length,
+            prefabs: arr.map((r) => ({ url: r.url, uuid: r.uuid })),
+        };
+    }
+    throw new Error('manage_prefab: unknown action');
+},
+```
+
+需要 `cc.director`（如：`cc.instantiate(prefab)` 实例化）：
+- 2.4 必须在 `cocos-mcp-2x/scene-script.js` 里加一个 `'mcp:prefab-instantiate'` 入口，main.js 里用 `_callSceneScript('mcp:prefab-instantiate', payload)` 转发。
+- 3.x 内置 `scene` 模块大多场景够用（`create-node`、`set-property` 等）；只有真的需要在 renderer 上下文跑代码时才加 scene-script，并在 `package.json#contributions.scene.script` 指向它。
+
+## 2. Python 端（2.4 / 3.x 共用）
+
+`server/src/services/tools/<name>.py`：
 
 ```python
-from typing import Annotated, Any, Literal
-from fastmcp import Context
-
 from services.registry import cocos_mcp_tool
 from services.tools._common import call_bridge
 
-
-@cocos_mcp_tool(
-    description=(
-        "Operate on prefabs.\n\n"
-        "Actions:\n"
-        "  list         - enumerate all .prefab assets.\n"
-        "  instantiate  - instantiate a prefab into the open scene under "
-        "`parent_uuid` (default = scene root).\n"
-    ),
-)
-async def manage_prefab(
-    ctx: Context,
-    action: Annotated[Literal["list", "instantiate"], "Operation."],
-    uuid: Annotated[str | None, "Prefab uuid for `instantiate`."] = None,
-    parent_uuid: Annotated[str | None, "Parent node uuid (defaults to scene root)."] = None,
-) -> dict[str, Any]:
-    params: dict[str, Any] = {"action": action}
-    if uuid is not None:
-        params["uuid"] = uuid
-    if parent_uuid is not None:
-        params["parentUuid"] = parent_uuid
-    return await call_bridge("manage_prefab", params)
+@cocos_mcp_tool(description="manage prefabs (list / instantiate / apply)")
+async def manage_prefab(ctx, action: str = "list", uuid: str | None = None,
+                         parentUuid: str | None = None) -> dict:
+    return await call_bridge("manage_prefab", {
+        "action": action,
+        "uuid": uuid,
+        "parentUuid": parentUuid,
+    })
 ```
+
+文件直接放在 `services/tools/`，启动时自动发现。
 
 ## 3. 重启
 
-* 在 Cocos Creator 里：菜单【扩展 → Cocos MCP → 停止 Bridge】然后【启动 Bridge】，或者重启整个编辑器。
-* 重启 Python server。
+- Cocos：菜单 **开发者 → 重载扩展**（或重启编辑器）
+- Python：Ctrl+C 后重新跑 `python -m main ...`，或者让 Claude Desktop / Cursor 重新 spawn
 
-## 4. 验证
+工具名 = bridge command 名 = 函数键名，三处保持一致。
 
-让 Claude 调用一次：
+---
 
-```
-manage_prefab(action="list")
-```
+## 命名 / 设计纪律
 
-返回应该包含 `success: true, data: { count: N, prefabs: [...] }`。
-
-## 命名约定
-
-* handler 文件名 == `module.exports.name` == Python tool 函数名 == 协议里的 `command`。
-* 多动作工具用 `action` 字段，不要拆成 `manage_node_tree`、`manage_node_get` 之类（unity-mcp 也是这套）。
-* 异步 / 长耗时操作（构建、热更新）记得在 Python 那边传 `timeout=`。
+- **对称**：Python tool 名 == bridge command 名 == handler 键名。
+- **最小抽象**：handler body 一般 5-30 行，参数走 `action` 分支；不要为了"复用"早早抽基类。
+- **错误如实回流**：抛出的 `Error` 会原样变成 `{success:false, error}`，不要在 handler 里 `try/catch` 然后吞掉。
+- **破坏性操作问用户**：`execute_script` 这种逃生口，Python wrapper 里不要给 auto-confirm 默认值。

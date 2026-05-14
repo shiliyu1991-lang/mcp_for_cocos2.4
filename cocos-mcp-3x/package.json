@@ -1,0 +1,32 @@
+{
+    "package_version": 2,
+    "version": "0.2.0",
+    "name": "cocos-mcp-3x",
+    "description": "MCP bridge for Cocos Creator 3.8.x — connects to a Python MCP server. Self-contained, no npm dependencies.",
+    "author": "cocosMcp",
+    "main": "./main.js",
+    "editor": ">=3.8.0",
+    "contributions": {
+        "menu": [
+            {
+                "path": "i18n:menu.extension/Cocos MCP",
+                "label": "Open Panel",
+                "message": "open-panel"
+            }
+        ],
+        "messages": {
+            "open-panel":       { "methods": ["openPanel"] },
+            "panel-status":     { "methods": ["panelStatus"] },
+            "panel-connect":    { "methods": ["panelConnect"] },
+            "panel-disconnect": { "methods": ["panelDisconnect"] }
+        }
+    },
+    "panels": {
+        "default": {
+            "title": "Cocos MCP",
+            "type": "dockable",
+            "main": "./panel/index.js",
+            "size": { "min-width": 420, "min-height": 280 }
+        }
+    }
+}

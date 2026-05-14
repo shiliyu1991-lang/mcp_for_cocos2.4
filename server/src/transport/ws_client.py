@@ -1,12 +1,22 @@
 """WebSocket transport between the MCP server and the Cocos extension.
 
-The bridge is a single, lazily-connected client to the editor extension.
-We give every outbound frame a uuid and resolve a Future when the matching
-reply comes back. If the socket dies, the next request will reconnect
-automatically (with a small backoff).
+The direction is now reversed compared to v0.1:
 
-This module is async and thread-safe enough for FastMCP's worker model: the
-single asyncio event loop owns the websocket, all tools `await` it.
+    v0.1: Cocos extension was the WS *server*; Python dialed in as a client.
+    v0.2: Python is the WS *server*; the Cocos extension dials in from its
+          panel "Connect" button.
+
+This makes the editor side a one-file/one-button setup — no listening port
+to free up, no auto-start dance. Trade-off: the Python MCP server has to
+host its WS server on a fixed port (default 6010) which is the URL the user
+types into the Cocos panel.
+
+Implementation note
+-------------------
+FastMCP owns the main asyncio loop (it runs `mcp.run(transport='stdio')`).
+We don't want to fight it for control, so we run the websockets server on
+a daemon thread with its own loop. `bridge.call()` (invoked from FastMCP's
+loop) forwards onto that loop via `asyncio.run_coroutine_threadsafe`.
 """
 
 from __future__ import annotations
@@ -14,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 import uuid
 from typing import Any, Optional
 
@@ -25,101 +36,183 @@ logger = logging.getLogger("cocos-mcp.bridge")
 
 
 class BridgeError(Exception):
-    """Raised when the extension reports a structured error."""
+    """The extension responded with a structured error."""
 
 
 class BridgeUnavailable(Exception):
-    """Raised when we cannot reach the extension at all."""
-
-
-def _is_open(ws):
-    """Best-effort 'is this websocket still usable?' for both legacy and new
-    websockets connection objects. websockets >=13 removed `.closed` from the
-    new asyncio API; we fall back to `.state` (CONNECTING/OPEN/CLOSING/CLOSED).
-    """
-    if ws is None:
-        return False
-    try:
-        closed = getattr(ws, "closed", None)
-    except Exception:
-        closed = None
-    if closed is not None:
-        return not closed
-    state = getattr(ws, "state", None)
-    if state is not None:
-        try:
-            return int(state) == 1 or getattr(state, "name", "") == "OPEN"
-        except Exception:
-            return True
-    return True
+    """No extension is connected, or the socket dropped mid-call."""
 
 
 class CocosBridge:
-    def __init__(self, host, port, path=None):
+    """WS server that waits for the Cocos extension to dial in.
+
+    Only one extension client is supported at a time; a new connection
+    replaces the old one. The protocol is the same JSON envelope used in
+    v0.1 — only the connection direction changed.
+    """
+
+    def __init__(self, host: str, port: int, path: Optional[str] = None) -> None:
         self._host = host
         self._port = port
         self._path = path or config.bridge_path
-        self._ws = None
-        self._lock = asyncio.Lock()
-        self._pending = {}
-        self._reader_task = None
-        self._closed = False
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._loop_ready = threading.Event()
+        self._loop_error: Optional[BaseException] = None
+        self._server: Optional[websockets.Server] = None
+        self._client = None  # the connected websocket (lives on self._loop)
+        self._pending: dict[str, asyncio.Future] = {}
+
+    # ------------------------------------------------------------------ #
+    # Lifecycle (called from FastMCP's main thread)
+    # ------------------------------------------------------------------ #
 
     @property
-    def url(self):
+    def url(self) -> str:
         return f"ws://{self._host}:{self._port}{self._path}"
 
-    async def _ensure_connected(self):
-        async with self._lock:
-            if _is_open(self._ws):
-                return self._ws
-            try:
-                logger.debug("connecting to %s", self.url)
-                self._ws = await asyncio.wait_for(
-                    websockets.connect(self.url, max_size=16 * 1024 * 1024),
-                    timeout=config.connect_timeout,
-                )
-            except (OSError, asyncio.TimeoutError) as exc:
-                raise BridgeUnavailable(
-                    f"could not connect to Cocos MCP bridge at {self.url}: {exc}. "
-                    "Make sure Cocos Creator is open and the extension's Bridge "
-                    "is started (扩展 → Cocos MCP → 启动 Bridge)."
-                ) from exc
-            self._reader_task = asyncio.create_task(self._reader_loop(self._ws))
-            return self._ws
+    def start_in_thread(self, ready_timeout: float = 5.0) -> None:
+        """Spawn the daemon thread that hosts the WS server. Blocks briefly
+        until the server is listening (or the start attempt failed)."""
+        t = threading.Thread(
+            target=self._thread_main,
+            name="cocos-bridge",
+            daemon=True,
+        )
+        t.start()
+        if not self._loop_ready.wait(timeout=ready_timeout):
+            raise RuntimeError(
+                f"cocos bridge thread did not become ready within {ready_timeout}s"
+            )
+        if self._loop_error is not None:
+            raise self._loop_error
 
-    async def _reader_loop(self, ws):
+    def _thread_main(self) -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        self._loop = loop
+        try:
+            self._server = loop.run_until_complete(self._serve())
+            logger.info("cocos bridge listening on %s", self.url)
+        except Exception as exc:  # pragma: no cover - reported via _loop_error
+            self._loop_error = exc
+            logger.exception("failed to start cocos bridge")
+            self._loop_ready.set()
+            return
+        self._loop_ready.set()
+        try:
+            loop.run_forever()
+        finally:
+            try:
+                loop.run_until_complete(loop.shutdown_asyncgens())
+            except Exception:
+                pass
+            loop.close()
+
+    async def _serve(self):
+        # websockets>=13 changed the handler signature; both shapes pass `ws`
+        # as the first positional, so this works on both.
+        return await websockets.serve(
+            self._on_connection,
+            self._host,
+            self._port,
+            max_size=16 * 1024 * 1024,
+            process_request=self._process_request,
+        )
+
+    async def _process_request(self, *args, **kwargs):
+        # Across websockets versions the signature for process_request differs.
+        # We just want to reject paths other than our configured one.
+        path = None
+        if args:
+            # websockets <13: (path, headers); >=13: (connection,) where
+            # connection.request.path is the URL path.
+            first = args[0]
+            if isinstance(first, str):
+                path = first
+            else:
+                req = getattr(first, "request", None)
+                if req is not None:
+                    path = getattr(req, "path", None)
+        if path is not None and path != self._path:
+            # Return a 404. Format also varies; the tuple form is widely accepted.
+            try:
+                from http import HTTPStatus
+                return (HTTPStatus.NOT_FOUND, [], b"not found\n")
+            except Exception:
+                return None
+        return None
+
+    # ------------------------------------------------------------------ #
+    # Connection handling (runs on self._loop)
+    # ------------------------------------------------------------------ #
+
+    async def _on_connection(self, ws, *_unused):
+        old = self._client
+        if old is not None:
+            try:
+                await old.close(code=1001, reason="superseded")
+            except Exception:
+                pass
+        self._client = ws
+        logger.info("cocos extension connected")
+        try:
+            await ws.send(json.dumps({
+                "type": "hello",
+                "server": "cocos-mcp-py",
+                "version": 2,
+            }))
+        except Exception:
+            pass
         try:
             async for raw in ws:
                 try:
                     frame = json.loads(raw)
                 except Exception:
-                    logger.warning("non-JSON frame from extension: %r", raw[:200])
+                    logger.debug("non-JSON frame from extension: %r", raw[:200])
                     continue
-                if isinstance(frame, dict) and frame.get("type") == "hello":
-                    logger.debug("bridge hello: %s", frame)
+                if not isinstance(frame, dict):
                     continue
-                rid = frame.get("id") if isinstance(frame, dict) else None
+                if frame.get("type") == "hello":
+                    continue
+                rid = frame.get("id")
                 if not rid:
-                    logger.debug("frame without id, ignored: %s", frame)
                     continue
                 fut = self._pending.pop(rid, None)
-                if not fut or fut.done():
-                    continue
-                fut.set_result(frame)
+                if fut and not fut.done():
+                    fut.set_result(frame)
         except websockets.ConnectionClosed:
             pass
         except Exception:
-            logger.exception("reader loop crashed")
+            logger.exception("cocos bridge reader crashed")
         finally:
+            logger.info("cocos extension disconnected")
+            if self._client is ws:
+                self._client = None
             for fut in list(self._pending.values()):
                 if not fut.done():
                     fut.set_exception(BridgeUnavailable("bridge connection lost"))
             self._pending.clear()
-            self._ws = None
 
-    async def call(self, command, params=None, timeout=None):
-        ws = await self._ensure_connected()
+    # ------------------------------------------------------------------ #
+    # Public API (invoked from FastMCP's loop, NOT self._loop)
+    # ------------------------------------------------------------------ #
+
+    async def call(self, command: str, params: Optional[dict] = None,
+                   timeout: Optional[float] = None) -> Any:
+        if self._loop is None:
+            raise BridgeUnavailable("cocos bridge thread not started")
+        coro = self._call_impl(command, params, timeout)
+        cf = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        return await asyncio.wrap_future(cf)
+
+    async def _call_impl(self, command: str, params: Optional[dict],
+                         timeout: Optional[float]) -> Any:
+        ws = self._client
+        if ws is None:
+            raise BridgeUnavailable(
+                f"Cocos extension is not connected. Open the Cocos MCP panel "
+                f"in Cocos Creator and click Connect (URL: {self.url})."
+            )
         rid = str(uuid.uuid4())
         loop = asyncio.get_running_loop()
         fut = loop.create_future()
@@ -130,7 +223,6 @@ class CocosBridge:
         except websockets.ConnectionClosed as exc:
             self._pending.pop(rid, None)
             raise BridgeUnavailable(f"send failed: {exc}") from exc
-
         try:
             reply = await asyncio.wait_for(fut, timeout=timeout or config.request_timeout)
         except asyncio.TimeoutError as exc:
@@ -139,37 +231,54 @@ class CocosBridge:
                 f"timeout waiting for reply to '{command}' after "
                 f"{timeout or config.request_timeout}s"
             ) from exc
-
         if not isinstance(reply, dict):
             raise BridgeError(f"non-object reply from extension: {reply!r}")
         if reply.get("success"):
             return reply.get("data")
         message = reply.get("error") or "unknown error"
-        stack = reply.get("stack")
-        if stack:
-            logger.debug("bridge error stack:\n%s", stack)
         raise BridgeError(f"{command}: {message}")
 
-    async def close(self):
-        self._closed = True
-        ws = self._ws
-        self._ws = None
-        if ws is not None:
-            try:
-                await ws.close()
-            except Exception:
-                pass
+    async def close(self) -> None:
+        # Shut down the WS server on the bridge thread.
+        loop = self._loop
+        if loop is None:
+            return
+
+        async def _shutdown():
+            if self._client is not None:
+                try:
+                    await self._client.close()
+                except Exception:
+                    pass
+                self._client = None
+            if self._server is not None:
+                self._server.close()
+                try:
+                    await self._server.wait_closed()
+                except Exception:
+                    pass
+                self._server = None
+            loop.stop()
+
+        try:
+            cf = asyncio.run_coroutine_threadsafe(_shutdown(), loop)
+            cf.result(timeout=5)
+        except Exception:
+            pass
 
 
-_global_bridge = None
+_global_bridge: Optional[CocosBridge] = None
 
 
-def set_global_bridge(b):
+def set_global_bridge(b: CocosBridge) -> None:
     global _global_bridge
     _global_bridge = b
 
 
-def get_bridge():
+def get_bridge() -> CocosBridge:
     if _global_bridge is None:
-        return CocosBridge(host=config.bridge_host, port=config.bridge_port)
+        raise BridgeUnavailable(
+            "cocos bridge has not been initialized — main.py forgot to "
+            "call set_global_bridge()."
+        )
     return _global_bridge

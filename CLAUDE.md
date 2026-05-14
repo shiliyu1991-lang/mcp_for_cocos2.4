@@ -4,36 +4,78 @@ Guidance for AI agents (Claude Code / Cursor / Windsurf) working in this repo.
 
 ## What this project is
 
-cocosMcp is an MCP server + Cocos Creator 2.4 editor extension that lets an AI assistant drive the editor: read scenes, mutate nodes, manage assets, watch the console, run debug snippets.
+cocosMcp is an MCP server + Cocos Creator editor extension that lets an AI assistant drive the editor: read scenes, mutate nodes, manage assets, watch the console, run debug snippets.
 
-Architecturally a near-copy of [unity-mcp](https://github.com/CoplayDev/unity-mcp): Python (FastMCP) server, editor-side plugin, JSON-over-WebSocket between them. Two codebases, one system.
+There are **two minimal plugin folders** sharing one Python server:
+
+- `cocos-mcp-2x/` — Cocos Creator **2.4** target. 4 files (`package.json`, `main.js`, `scene-script.js`, `panel/index.js`). Uses `Editor.assetdb` callbacks, `Editor.Scene.callSceneScript`, global `cc`, `.fire` scenes.
+- `cocos-mcp-3x/` — Cocos Creator **3.8.x** target. 3 files (`package.json`, `main.js`, `panel/index.js`). Uses `Editor.Message.request`, built-in `scene` module endpoints, ES-module-friendly `cc`, `.scene` scenes.
+
+Both plugins:
+- Are **WebSocket clients** that dial into Python's WS server (listening on `127.0.0.1:6010/cocosmcp`).
+- Have **no npm dependencies** — WebSocket client is hand-rolled on Node's built-in `net` + `crypto`.
+- Are **paste-and-go** — drop the folder into the Cocos project's `packages/` (2.4) or `extensions/` (3.x), restart Cocos, click **Connect** in the panel.
+
+The JSON frame format on the wire is identical for both — only the editor-side JS differs. The server's `transport/`, `registry`, and `services/tools/*.py` work for either.
+
+Architecturally a near-copy of [unity-mcp](https://github.com/CoplayDev/unity-mcp): Python (FastMCP) server, editor-side plugin, JSON-over-WebSocket between them.
+
+User-facing usage doc: [USAGE.md](./USAGE.md).
 
 ## Layout
 
 ```
-server/          Python FastMCP server (each tool = one .py file)
-extension/       Cocos Creator 2.4 package
-extension/handlers/      one .js per command, called from main process
-extension/scene-script.js  cc.director / scene-graph operations
-extension/lib/ws-server.js wraps `ws`
-extension/lib/console-hook.js  ring-buffer for Editor.log/warn/error
-docs/            architecture, "adding a tool" walkthrough, MCP config example
+server/                 Python FastMCP server (each tool = one .py file)
+  src/transport/ws_client.py   despite the name this is the WS *server* that
+                               the Cocos extension dials into (port 6010
+                               by default). Runs on a daemon thread with its
+                               own asyncio loop; bridge.call() dispatches
+                               onto it via run_coroutine_threadsafe.
+
+cocos-mcp-2x/           Cocos Creator 2.4 plugin
+  package.json          name: cocos-mcp-2x, declares panel + scene-script + main-menu
+  main.js               WS client + Editor.log hook + command handlers
+  scene-script.js       cc.director access for manage_scene `current`
+  panel/index.js        Vue 1 + Editor.Panel.extend UI
+
+cocos-mcp-3x/           Cocos Creator 3.8.x plugin
+  package.json          package_version: 2, contributions + panel registration
+  main.js               WS client + console.* hook + command handlers
+  panel/index.js        3.x panel API UI
+
+docs/                   architecture, plan, MCP config example
+USAGE.md                user-facing install & run instructions
+
+extension/, extension-3x/    legacy, see DEPRECATED.md in each folder
 ```
 
 ## Adding a tool
 
-Mirror image: every tool exists on both sides.
+Mirror image: every tool exists on **both** the server side and the editor side. When porting/adding for both engines, write the JS body twice (in `cocos-mcp-2x/main.js` and `cocos-mcp-3x/main.js`) — the Python side is shared.
 
-1. **Extension handler** — `extension/handlers/<name>.js`:
+1. **Editor handler — both versions live in the `handlers = { … }` object inside `main.js`:**
+
+   **2.4** (`cocos-mcp-2x/main.js`): use callback-style `Editor.assetdb.*` and forward to `scene-script.js` when you need `cc.director`:
    ```js
-   async function handle(params, ctx) {
-       // ctx.consoleBuffer is the ring buffer if you need it
-       // throw on error; the ws-server turns it into a structured reply
-       return { ... };  // JSON-serializable
+   async my_tool(params) {
+       // Async work via wrapped callbacks:
+       const r = await new Promise((res, rej) =>
+           Editor.assetdb.queryAssets(pattern, type, (e, x) => e ? rej(e) : res(x)));
+       // OR forward to scene-script:
+       const s = await _callSceneScript('mcp:my-op', params);
+       return { ... };
    }
-   module.exports = { name: '<name>', handle };
    ```
-   If you need `cc.director` / live nodes, add a `mcp:<name>` op in `scene-script.js` and forward through `Editor.Scene.callSceneScript('cocos-mcp', op, payload, cb)`.
+   If `mcp:my-op` is a new scene op, add a handler in `cocos-mcp-2x/scene-script.js`.
+
+   **3.8.x** (`cocos-mcp-3x/main.js`): use Promise-based `Editor.Message.request`:
+   ```js
+   async my_tool(params) {
+       const r = await Editor.Message.request('asset-db', 'query-assets', { ... });
+       return { ... };
+   }
+   ```
+   3.x's built-in `scene` module endpoints (`query-node`, `query-node-tree`, `set-property`, `create-node`, `create-component`, `open-scene`, `save-scene`) cover most cases without a custom scene-script. If you do need one, add `extension-3x/scene-script.js` and point `package.json#contributions.scene.script` at it.
 
 2. **Python tool** — `server/src/services/tools/<name>.py`:
    ```python
@@ -58,10 +100,12 @@ Mirror image: every tool exists on both sides.
 
 ## What to NOT do
 
-- Don't access `cc` / `cc.director` / `cc.Node` from `main.js` or `handlers/*.js` — those run in the extension's main process and have no engine. Forward to `scene-script.js`.
-- Don't write to assets directly with `Fs`. Use `Editor.assetdb.create/delete/refresh` so the asset DB stays consistent.
-- Don't add npm dependencies to the extension casually — Cocos's package isolation is shaky and a heavy install can confuse users. `ws` is the only runtime dep right now.
+- Don't access `cc` / `cc.director` / `cc.Node` from `main.js` — it runs in the extension's main process and has no engine. Forward to `scene-script.js` (2.4) or one of 3.x's built-in scene-module endpoints.
+- Don't write to assets directly with `Fs`. Use the asset DB so it stays consistent — `Editor.assetdb.create/delete/refresh` on 2.4, or `Editor.Message.request('asset-db', '<op>-asset', ...)` on 3.x.
+- **Don't add npm dependencies to the editor plugins.** Both `cocos-mcp-2x/` and `cocos-mcp-3x/` are zero-npm — the WebSocket client is inlined in `main.js` on top of Node's `net` + `crypto`. Keeping it that way means the plugins stay paste-and-go. If you really need a third-party module, vendor a single file rather than introducing `node_modules/`.
 - Don't expose `execute_script` defaults that auto-confirm. The Python wrapper trusts the LLM to ask the user before destructive runs.
+- Don't let 2.4 and 3.x code drift in behavior silently. When you change a handler in one, port the change to the other in the same PR, or open a follow-up explicitly noting the gap.
+- Don't touch `extension/` or `extension-3x/` — those are legacy. New work goes into `cocos-mcp-2x/` and `cocos-mcp-3x/`.
 
 ## Testing locally without Cocos Creator
 
