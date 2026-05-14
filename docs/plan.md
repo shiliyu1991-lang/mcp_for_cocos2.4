@@ -1,8 +1,8 @@
-# mcpforcocos 路线图
+# mcpforcocos2.x 路线图
 
 > 上次修订：2026-05-14
 > 单引擎：Cocos Creator 2.4。
-> 3.8.x 版本看姊妹仓库 [mcpforcocos3x](https://github.com/shiliyu1991-lang/mcpforcocos3x)。
+> 3.8.x 版本看姊妹仓库 [mcpforcocos3.x](https://github.com/shiliyu1991-lang/mcpforcocos3.x)。
 
 ## 当前状态
 

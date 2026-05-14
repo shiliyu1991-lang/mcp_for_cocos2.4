@@ -1,4 +1,4 @@
-# mcpforcocos
+# mcpforcocos2.x
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Cocos Creator](https://img.shields.io/badge/Cocos%20Creator-2.4-blue.svg)](https://docs.cocos.com/creator/2.4/manual/en/)
@@ -7,12 +7,12 @@
 
 让 AI 助手（Claude Desktop / Claude Code / Cursor / Windsurf 等）通过 [Model Context Protocol](https://modelcontextprotocol.io/) 直接驱动 **Cocos Creator 2.4** 编辑器：读场景、改节点、查资源、看控制台。
 
-> 用 Cocos Creator **3.8.x**？看姊妹仓库 **[mcpforcocos3x](https://github.com/shiliyu1991-lang/mcpforcocos3x)**。两边架构一致，只是编辑器 API 不同所以分两个仓。
+> 用 Cocos Creator **3.8.x**？看姊妹仓库 **[mcpforcocos3.x](https://github.com/shiliyu1991-lang/mcpforcocos3.x)**。两边架构一致，只是编辑器 API 不同所以分两个仓。
 
 ## 仓库结构
 
 ```
-mcpforcocos/
+mcpforcocos2.x/
 ├── cocos-mcp-2x/        ← Cocos Creator 2.4 插件（4 个文件）
 │   ├── package.json
 │   ├── main.js           内联 WebSocket client + 控制台缓冲 + 命令 handlers
