@@ -56,3 +56,7 @@ logs/
 extension/config.local.json
 .env
 .env.local
+
+# ---------- staging area for the new 3.x-only repo ----------
+# move this folder out to D:\AIToolEdit\mcpforcocos3x\ to bootstrap the new repo
+mcpforcocos3x/
